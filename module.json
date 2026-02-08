@@ -1,0 +1,27 @@
+{
+  "id": "pf2e-counteract",
+  "title": "PF2e Counteract",
+  "version": "0.1.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13",
+    "maximum": "13"
+  },
+  "authors": [
+    {
+      "name": "Allalinor",
+      "discord": "allalinor"
+    }
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf2e",
+        "type": "system"
+      }
+    ]
+  },
+  "scripts": ["scripts/main.js"],
+  "manifest": "https://github.com/Allalinor/pf2e-counteract/releases/latest/download/module.json",
+  "download": "https://github.com/Allalinor/pf2e-counteract/releases/download/1.0.0/module.zip"
+}

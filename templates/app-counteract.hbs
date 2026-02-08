@@ -1,0 +1,257 @@
+<style>
+  .counteract-check-dialog .standard-form {
+    padding: 0.5em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .counteract-check-dialog fieldset {
+    display: flex;
+    padding: 0.5em;
+    flex-direction: column;
+    position: relative;
+    gap: 0.5em;
+  }
+
+  .counteract-check-dialog legend {
+    font-weight: bold;
+    padding: 0 5px;
+  }
+
+  .counteract-check-dialog .button-grid {
+    display: grid;
+    gap: 1em;
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .counteract-check-dialog .button-grid button {
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    --button-size: 3em;
+  }
+
+  .counteract-check-dialog .button-grid button.selected {
+    background-color: #007bff;
+    color: white;
+  }
+
+  .counteract-check-dialog .button-grid button:hover:not(.selected) {
+    background-color: #f0f0f0;
+    color: black;
+  }
+
+  .counteract-check-dialog .checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    justify-content: space-between;
+  }
+
+  .counteract-check-dialog .checkbox-container label {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    flex: 1;
+  }
+
+  .counteract-check-dialog .checkbox-container input {
+    margin-right: 0.5em;
+  }
+
+  .counteract-check-dialog .form-footer {
+    display: flex;
+    gap: 0.5em;
+  }
+
+  .counteract-check-dialog .form-footer button {
+    flex: 1;
+    --button-size: 3em;
+  }
+
+  .counteract-check-dialog input[type="text"],
+  .counteract-check-dialog textarea,
+  .counteract-check-dialog select {
+    padding: 0.5em;
+  }
+
+  .counteract-check-dialog .dc-mode-buttons {
+    display: flex;
+    gap: 0.5em;
+  }
+
+  .counteract-check-dialog .dc-mode-buttons button {
+    flex: 1;
+  }
+
+  .counteract-check-dialog .rank-mode-button,
+  .counteract-check-dialog .dc-target-button {
+    display: block;
+    margin: 0 auto;
+    padding: 0.5em;
+    width: fit-content;
+  }
+
+  .counteract-check-dialog .syntax-preview {
+    width: 100%;
+    min-height: 2em;
+    resize: none;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    padding: 0.5em;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+
+  .counteract-check-dialog .dc-value-container,
+  .counteract-check-dialog .modifier-container,
+  .counteract-check-dialog .adjustment-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .counteract-check-dialog .dc-value-container input[type="range"],
+  .counteract-check-dialog .adjustment-container input[type="range"] {
+    flex: 1;
+  }
+
+  .counteract-check-dialog .dc-value-container select[name="dc-type"] {
+    width: 50%;
+  }
+
+  .counteract-check-dialog .modifier-container select[name="modtype"] {
+    width: 50%;
+  }
+
+  .counteract-check-dialog .dc-value-container .dc-input {
+    flex: 1;
+  }
+
+  .counteract-check-dialog .modifier-container .modifier-input {
+    flex: 1;
+  }
+
+  .counteract-check-dialog .adjustment-container select[name="adjustment-type"] {
+    width: 50%;
+  }
+</style>
+
+<form autocomplete="off">
+  <div class="counteract-check-dialog">
+    <div class="standard-form">
+
+      <fieldset>
+        <legend>Label</legend>
+        <input
+          type="text"
+          id="counteractcheckName"
+          placeholder="Enter counteract check label..."
+          aria-label="Counteract Check label"
+        />
+      </fieldset>
+
+      <fieldset>
+        <legend>Modifier</legend>
+        <div class="modifier-container" id="modifier-container">
+          <select name="modtype">
+            <option value="skill">Skill</option>
+            <option value="lore">Lore</option>
+            <option value="save">Save</option>
+            <option value="perception">Perception</option>
+            <option value="class">Class</option>
+            <option value="spell">Spell</option>
+            <option value="flat">Flat</option>
+          </select>
+          <input
+            type="text"
+            id="modifierValue"
+            class="modifier-input"
+            placeholder="Enter modifier value..."
+            aria-label="Modifier value"
+          />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Source Counteract Rank [<span id="counteractRankValue">0</span>]</legend>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="range" id="counteractRank" min="0" max="15" step="1" value="0" style="flex: 1;">
+          <button type="button" class="rank-mode-button" data-rank="source" data-mode="actor" title="Use Selected Actor Level">
+            <i class="fa-solid fa-user"></i>
+          </button>
+        </div>
+      </fieldset>
+
+      {{#if user.isGM}}
+      <fieldset>
+        <legend>Target Counteract Rank [<span id="targetRankValue">0</span>]</legend>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="range" id="targetRank" min="0" max="15" step="1" value="0" style="flex: 1;">
+          <button type="button" class="rank-mode-button" data-rank="target" data-mode="actor" title="Use Targeted Actor Level">
+            <i class="fa-solid fa-crosshairs"></i>
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Counteract DC [<span id="total-dc-value">0</span>]</legend>
+        <div class="dc-value-container" id="dc-value-container">
+          <select name="dc-type">
+            <option value="custom">Custom DC</option>
+            <option value="simple">Simple DC</option>
+            <option value="level">Level Based DC</option>
+            <option value="statistic">Target Statistic DC</option>
+          </select>
+        <div class="adjustment-container">
+          <select name="adjustment-type">
+            <option value="custom">Custom Adjustment</option>
+            <option value="-10">Incredibly Easy (-10)</option>
+            <option value="-5">Very Easy (-5)</option>
+            <option value="-2">Easy (-2)</option>
+            <option value="0">No Adjustment (0)</option>
+            <option value="2">Hard (2)</option>
+            <option value="5">Very Hard (5)</option>
+            <option value="10">Incredibly Hard (10)</option>
+          </select>
+          <input type="range" id="dc-adjustment" min="-10" max="10" step="1" value="0" list="adjustment-markers">
+          <span id="dc-adjustment-value">0</span>
+          <datalist id="adjustment-markers">
+            <option value="-10" label="Incredibly Easy"></option>
+            <option value="-5" label="Very Easy"></option>
+            <option value="-2" label="Easy"></option>
+            <option value="0" label="No Adjustment"></option>
+            <option value="2" label="Hard"></option>
+            <option value="5" label="Very Hard"></option>
+            <option value="10" label="Incredibly Hard"></option>
+          </datalist>
+        </div>
+      </fieldset>
+      {{/if}}
+
+      <fieldset>
+        <legend>Traits & Roll Options</legend>
+        <input type="text" id="traitsInput" placeholder="Traits" aria-label="Enter Traits" />
+        <input type="text" id="rollOptionsInput" placeholder="Roll Options" aria-label="Enter Roll Options" />
+      </fieldset>
+
+      <fieldset>
+        <legend>Syntax Preview</legend>
+        <textarea class="syntax-preview" readonly aria-label="Syntax Preview"></textarea>
+      </fieldset>
+
+      <footer class="form-footer" data-application-part="footer">
+        <button id="addToClipboard" aria-label="Add to Clipboard">
+           <i class="fa-solid fa-clipboard"></i> Add to Clipboard
+        </button>
+        <button id="postToChatButton" aria-label="Post to Chat">
+          <i class="fas fa-comment-alt"></i> Post to Chat
+        </button>
+      </footer>
+
+    </div>
+  </div>
+</form>
