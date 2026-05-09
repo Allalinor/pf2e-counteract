@@ -319,6 +319,7 @@ async function pf2ecac_onCounteractButtonClick(event) {
       return;
   }
 
+  pf2ecac_counteractSourceRank = null;
   if (args["source-rank"]) {
     if (args["source-rank"] === "actor-level") {
       pf2ecac_counteractSourceRank = Math.ceil(actor.system.details.level.value / 2);
@@ -341,6 +342,7 @@ async function pf2ecac_onCounteractButtonClick(event) {
     }
   }
 
+  pf2ecac_counteractTargetRank = null;
   if (args["target-rank"]) {
     if (args["target-rank"] === "actor-level") {
       const targets = [...game.user.targets];
@@ -362,7 +364,24 @@ async function pf2ecac_onCounteractButtonClick(event) {
     }
   }
 
-  pf2ecac_counteractDc = args.dc ? parseInt(args.dc) + (args.adjustment ? parseInt(args.adjustment) : 0) : null;
+  pf2ecac_counteractDc = null;
+  if (args.dc === "target") {
+    const target = pf2ecac_getTargetToken();
+    if (!target) {
+      ui.notifications.warn("You must target exactly one creature.");
+      return;
+    }
+    pf2ecac_counteractDc = await pf2ecac_getLevelBasedDC(target);
+  }
+  else if (args.dc === "source") {
+    pf2ecac_counteractDc = await pf2ecac_getLevelBasedDC(actor);
+  }
+  else if (args.dc) {
+    pf2ecac_counteractDc = parseInt(args.dc);
+  }
+  if (pf2ecac_counteractDc !== null && args.adjustment) {
+    pf2ecac_counteractDc += parseInt(args.adjustment);
+  }
   
   const inlineTraits = args.traits ? args.traits.split(",").map(t => t.trim()) : [];
   const overrideTraits = args.overrideTraits === true;
@@ -379,14 +398,8 @@ async function pf2ecac_onCounteractButtonClick(event) {
   pf2ecac_counteractOriginalTargetRank = pf2ecac_counteractTargetRank;
   pf2ecac_counteractOriginalDc = pf2ecac_counteractDc;
 
-  if (game.system?.id === "pf2e") {
-    pf2ecac_showOutcome = game.settings.get("pf2e", "metagame_showResults");
-    pf2ecac_showDC = game.settings.get("pf2e", "metagame_showDC");
-  }
-  else if (game.system?.id === "sf2e") {
-    pf2ecac_showOutcome = game.settings.get("sf2e", "metagame_showResults");  
-    pf2ecac_showDC = game.settings.get("sf2e", "metagame_showDC");
-  }
+  pf2ecac_showOutcome = game.settings.get(game.system?.id, "metagame_showResults");  
+  pf2ecac_showDC = game.settings.get(game.system?.id, "metagame_showDC");
 
   if (args.showDC) pf2ecac_showDC = true;
   if (args.hideDC) pf2ecac_showDC = false;
