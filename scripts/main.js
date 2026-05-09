@@ -1,67 +1,114 @@
-async function pf2ecac_rollCounteractCheck(actor, roll_mode, skip_dialog, label, statistic, counteractRank, targetRank, dc, traits = [], roll_options = [], statKey) {
-  const system_domains = statKey === "number" ? [] : statistic.domains;
+Hooks.once("init", () => {
+  pf2ecac_registerCounteractInLine();
+});
+
+Hooks.once("ready", () => {
+  document.body.addEventListener("click", pf2ecac_onCounteractButtonClick);
+  document.body.addEventListener("click", pf2ecac_onPTCButtonClick);
+});
+
+Hooks.on("renderCheckModifiersDialog", pf2ecac_patchCounteractDialog);
+
+let pf2ecac_counteractSourceRank = null;
+let pf2ecac_counteractTargetRank = null;
+let pf2ecac_counteractDc = null;
+let pf2ecac_counteractOriginalSourceRank = null;
+let pf2ecac_counteractOriginalTargetRank = null;
+let pf2ecac_counteractOriginalDc = null;
+let pf2ecac_showDC = null;
+let pf2ecac_showOutcome = null;
+
+async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, statistic, counteractRank, targetRank, dc, traits = [], rollOptions = [], statKey) {
+  const identifier = foundry.utils.randomID();
+  const system_domains = statKey === "number" || statKey === "levelBased" ? [] : statistic.domains;
   const domains = ["check","counteract-check", ...system_domains];
-  const options = ["counteract","check:statistic:counteract","check:type:check", ...roll_options, ...traits];
-
-  const showDC = game.settings.get("pf2e", "metagame_showDC");
-  const showOutcome = game.settings.get("pf2e", "metagame_showResults");
-
+  const options = ["counteract","check:statistic:counteract","check:type:check", ...rollOptions, ...traits, identifier];
   const isPlayerOwned = actor.hasPlayerOwner;
 
-  const sourcePart = !showDC && !isPlayerOwned
-    ? `<span data-visibility="gm">Source Rank ${counteractRank}</span>`
-    : `Source Rank ${counteractRank}`;
+  let statLabel;
+  if (statKey === "number") {
+    statLabel = "Static Number";
+  }
+  else if (statKey === "levelBased") {
+    statLabel = "Level Based";
+  }
+  else if (statKey === "spell" || statKey === "spellCounteract") {
+    statLabel = "Spell Modifier";
+  }
+  else {
+    statLabel =  statistic.label;
+  }
 
-  const targetPart = targetRank
-    ? (showDC ? ` VS Target Rank ${targetRank}` : ` <span data-visibility="gm">VS Target Rank ${targetRank}</span>`)
-    : "";
-
-  const statLabel = statKey === "number" || statistic.label === "Counteract" ? "Spell" : statistic.label;
-
-  let RollLabel;
+  let rollLabel;
   if (label === "Counteract") {
-    RollLabel = `${label} Check${statLabel ? ` (${statLabel})` : ""}<br>${sourcePart}${targetPart}`;
+    rollLabel = `${label} Check${statLabel ? ` (${statLabel})` : ""}`;
   } else {
-    RollLabel = `${label}${statLabel ? ` (${statLabel} Counteract Check)` : " Counteract Check"}<br>${sourcePart}${targetPart}`;
+    rollLabel = `${label}${statLabel ? ` (${statLabel} Counteract Check)` : " Counteract Check"}`;
   }
-
-  if (traits.includes("secret")) {
-  roll_mode = "blindroll"
-  }
-
-  const rollPromise = new Promise((resolve) => {
-    Hooks.once("createChatMessage", (message) => resolve(message));
-  });
 
   const result = await game.pf2e.Check.roll(
-    new game.pf2e.CheckModifier(RollLabel, statistic),
+    new game.pf2e.CheckModifier(rollLabel, statistic),
     {
       actor,
-      type: "check",
+      type: "counteract",
       domains,
       dc: dc ? { value: dc } : undefined,
       options,
       traits,
       createMessage: true,
-      skipDialog: skip_dialog,
-      rollMode: roll_mode
+      skipDialog,
+      rollMode,
+      messageMode: rollMode
     }
   );
 
-  const message = await rollPromise;
+  const message = game.messages.find(m =>
+    m.flags?.pf2e?.context?.options?.includes(identifier)
+  );
   if (!message) return;
 
-  const counteractMessage = pf2ecac_generateCounteractMessage(result.degreeOfSuccess, counteractRank, !!dc, targetRank, showDC);
-  const flavoredCounteract = showOutcome ? counteractMessage : `<span data-visibility="gm">${counteractMessage}</span>`;
+  const updatedSourceRank = pf2ecac_counteractSourceRank;
+  const updatedTargetRank = pf2ecac_counteractTargetRank ;
+  const updatedDc = pf2ecac_counteractDc;
 
-  const newFlavor = (message.flavor ?? "") + flavoredCounteract;
+  const counteractMessage = pf2ecac_generateCounteractMessage(result.degreeOfSuccess, updatedSourceRank, !!updatedDc, updatedTargetRank, pf2ecac_showDC);
+  const flavoredCounteract = pf2ecac_showOutcome ? counteractMessage : `<span data-visibility="gm">${counteractMessage}</span>`;
+
+  const hasSource = updatedSourceRank != null;
+  const hasTarget = updatedTargetRank != null;
+
+  const updatedSourcePart = hasSource
+    ? (!pf2ecac_showDC && !isPlayerOwned
+        ? `<span data-visibility="gm">Source Rank ${updatedSourceRank}</span>`
+        : `Source Rank ${updatedSourceRank}`)
+    : "";
+
+  const updatedTargetPart = hasTarget
+    ? (pf2ecac_showDC
+        ? `Target Rank ${updatedTargetRank}`
+        : `<span data-visibility="gm">Target Rank ${updatedTargetRank}</span>`)
+    : "";
+
+  const vsPart = (hasSource && hasTarget)
+    ? (pf2ecac_showDC
+        ? " VS "
+        : ` <span data-visibility="gm">VS</span> `)
+    : "";
+
+  const rankPart = (hasSource || hasTarget)
+    ? `<strong>${updatedSourcePart}${vsPart}${updatedTargetPart}</strong><br><hr>`
+    : "";
+
+  const newFlavor = (message.flavor ?? "") + rankPart + flavoredCounteract;
 
   const updateData = { flavor: newFlavor };
-  if (roll_mode === "blindroll") {
+  
+  if (rollMode === "blindroll" || rollMode === "blind") {
     updateData.whisper = game.users.filter(u => u.isGM).map(u => u.id);
   }
 
   await message.update(updateData);
+  if (ui.chat.isAtBottom) await ui.chat.scrollBottom()
 }
 
 async function pf2ecac_onCounteractButtonClick(event) {
@@ -80,7 +127,7 @@ async function pf2ecac_onCounteractButtonClick(event) {
   }
 
   const label = button.dataset.label ?? "Counteract";
-  const rollMode = pf2ecac_getRollMode(event);
+  let rollMode = pf2ecac_getRollMode(event);
   const skipDialog = pf2ecac_getRollDialog(event);
 
   const modParts = args.mod.split(":");
@@ -89,47 +136,104 @@ async function pf2ecac_onCounteractButtonClick(event) {
 
   switch (modParts[0]) {
     case "skill":
-      statKey = modParts[1];
-      statistic = actor.skills?.[statKey];
-      if (!statistic) {
-        ui.notifications.warn(`Skill: '${pf2ecac_capitalizeFirst(statKey)}' not found on actor.`);
-        return;
+      if (modParts[1] === "highest") {
+        const skills = Object.entries(actor.skills)
+          .filter(([key]) => !key.includes("-lore"));
+        if (skills.length === 0) {
+          ui.notifications.warn("Actor has no skills.");
+          return;
+        }
+        const highestSkill = skills.reduce((highest, current) => {
+          return current[1].check.mod > highest[1].check.mod
+            ? current
+            : highest;
+        });
+        statKey = highestSkill[0];
+        statistic = highestSkill[1];
+      } else {
+        statKey = modParts[1];
+        statistic = actor.skills?.[statKey];
       }
+        if (!statistic) {
+          ui.notifications.warn(`Skill: '${pf2ecac_capitalizeFirst(statKey)}' not found on actor.`);
+          return;
+        }
       break;
 
     case "lore":
-      statKey = `${modParts[1]}-lore`;
-      statistic = actor.skills?.[statKey];
+      if (modParts[1] === "highest") {
+        const lores = Object.entries(actor.skills)
+          .filter(([key]) => key.includes("-lore"));
+        if (lores.length === 0) {
+          ui.notifications.warn("Actor has no lore skills.");
+          return;
+        }
+        const highestLore = lores.reduce((highest, current) => {
+          return current[1].check.mod > highest[1].check.mod
+            ? current
+            : highest;
+        });
+        statKey = highestLore[0];
+        statistic = highestLore[1];
+      } else {
+        statKey = `${modParts[1]}-lore`;
+        statistic = actor.skills?.[statKey];
+      }
       if (!statistic) {
         ui.notifications.warn(`Lore: '${pf2ecac_capitalizeFirst(modParts[1])}' not found on actor.`);
         return;
       }
       break;
-
+  
     case "save":
-      statKey = modParts[1];
-      statistic = actor.saves?.[statKey];
-      if (!statistic) {
-        ui.notifications.warn(`Save: '${pf2ecac_capitalizeFirst(statKey)}' not found on actor.`);
-        return;
+      if (modParts[1] === "highest") {
+        const saves = Object.entries(actor.saves);
+        if (saves.length === 0) {
+          ui.notifications.warn("Actor has no saves.");
+          return;
+        }
+        const highestSave = saves.reduce((highest, current) => {
+          return current[1].check.mod > highest[1].check.mod
+            ? current
+            : highest;
+        });
+        statKey = highestSave[0];
+        statistic = highestSave[1];
+      } else {
+        statKey = modParts[1];
+        statistic = actor.saves?.[statKey];
+        }
+        if (!statistic) {
+          ui.notifications.warn(`Save: '${pf2ecac_capitalizeFirst(statKey)}' not found on actor.`);
+          return;
       }
       break;
 
     case "spell":
-      if (modParts[1] === "highest") {
+      if (modParts[1] === "counteract") {
         statKey = "spellCounteract";
         statistic = actor.getStatistic("counteract");
+
         if (!statistic) {
-          ui.notifications.warn(`Spell DC not found on actor.`);
+          ui.notifications.warn(`Counteract DC not found on actor.`);
           return;
         }
       } else {
-        statKey = "spell";
-        statistic = actor.attributes?.spellDC;
-        if (!statistic) {
-          ui.notifications.warn(`Spell DC not found on actor.`);
+        const tradition = modParts[1];
+
+        const result = pf2ecac_getSpellcastingEntry(actor, tradition);
+
+        if (!result) {
+          if (tradition === "highest") {
+            ui.notifications.warn(`Can't cast spells.`);
+          } else {
+          ui.notifications.warn(`Can't cast ${pf2ecac_capitalizeFirst(tradition)} spells.`);
+          }
           return;
         }
+
+        statKey = tradition;
+        statistic = result.statistic;
       }
       break;
 
@@ -154,12 +258,16 @@ async function pf2ecac_onCounteractButtonClick(event) {
 
     case "class-spell":
       statKey = `class-spell`;
-      const classDCValue = actor.system.attributes.classDC?.value ?? 0;
-      const spellDCValue = actor.system.attributes.spellDC?.value ?? 0;
+      const classDCValue = actor.classDC?.mod ?? 0;
+      const spellDCValue = pf2ecac_getSpellcastingEntry(actor, 'highest')?.dc - 10 ?? 0;
 
       statistic = classDCValue >= spellDCValue
         ? actor.classDC
-        : actor.getStatistic("counteract");
+        : pf2ecac_getSpellcastingEntry(actor, 'highest')?.statistic;
+      if (!statistic) {
+        ui.notifications.warn(`No Class or Spell DC found on actor.`);
+        return;
+      }
       break;
 
     case "perception":
@@ -172,20 +280,35 @@ async function pf2ecac_onCounteractButtonClick(event) {
       break;
 
     case "number": {
-      const modValue = Number(modParts[1]);
-      if (isNaN(modValue)) {
-        ui.notifications.warn(`Invalid flat modifier: ${args.mod}`);
-        return;
+      let modValue = null;
+      let modifier = null;
+      if (modParts[1] === "actor-level") {
+        modValue = await pf2ecac_getLevelBasedDC(actor);
+        if (isNaN(modValue)) {
+          ui.notifications.warn(`Invalid flat modifier: ${args.mod}`);
+          return;
+        }
+        statKey = "levelBased";
+        modifier = new game.pf2e.Modifier({
+          label: "Level Based Modifier",
+          slug: "level-based-modifier",
+          type: "untyped",
+          modifier: modValue
+      });        
+      } else {
+        modValue = Number(modParts[1]);
+        if (isNaN(modValue)) {
+          ui.notifications.warn(`Invalid flat modifier: ${args.mod}`);
+          return;
+        }
+        statKey = "number";
+        modifier = new game.pf2e.Modifier({
+          label: "Static Modifier",
+          slug: "static-number-modifier",
+          type: "untyped",
+          modifier: modValue
+        });
       }
-
-      statKey = "number";
-
-      const modifier = new game.pf2e.Modifier({
-        label: "Modifer",
-        slug: "fixed-number",
-        type: "untyped",
-        modifier: modValue
-      });
 
       statistic = new game.pf2e.StatisticModifier(label, [modifier]);
       break;
@@ -196,29 +319,27 @@ async function pf2ecac_onCounteractButtonClick(event) {
       return;
   }
 
-  let sourceRank = args["source-rank"];
-
-  if (sourceRank === "actor-level") {
-    sourceRank = Math.ceil(actor.system.details.level.value / 2);
-  } else if (sourceRank === "item-level") {
-    const itemLevel = Number(args.__itemLevel);
-    if (isNaN(itemLevel)) {
-      ui.notifications.warn(`Item level not available for counteract.`);
-      return;
+  if (args["source-rank"]) {
+    if (args["source-rank"] === "actor-level") {
+      pf2ecac_counteractSourceRank = Math.ceil(actor.system.details.level.value / 2);
+    } else if (args["source-rank"] === "item-level") {
+      const itemLevel = Number(args.__itemLevel);
+      if (isNaN(itemLevel)) {
+        ui.notifications.warn(`Item level not available for counteract.`);
+        return;
+      }
+      pf2ecac_counteractSourceRank = Math.ceil(itemLevel / 2);
+    } else if (args["source-rank"] === "spell-rank") {
+      const spellRank = Number(args.__spellRank);
+      if (isNaN(spellRank)) {
+        ui.notifications.warn(`Spell rank not available for counteract.`);
+        return;
+      }
+      pf2ecac_counteractSourceRank = spellRank;
+    } else {
+      pf2ecac_counteractSourceRank = parseInt(args["source-rank"]);
     }
-    sourceRank = Math.ceil(itemLevel / 2);
-  } else if (sourceRank === "spell-rank") {
-    const spellRank = Number(args.__spellRank);
-    if (isNaN(spellRank)) {
-      ui.notifications.warn(`Spell rank not available for counteract.`);
-      return;
-    }
-    sourceRank = spellRank;
-  } else {
-    sourceRank = parseInt(sourceRank);
   }
-
-  let targetRank = null;
 
   if (args["target-rank"]) {
     if (args["target-rank"] === "actor-level") {
@@ -226,31 +347,60 @@ async function pf2ecac_onCounteractButtonClick(event) {
 
       if (targets.length !== 1) {
         ui.notifications.warn("You must target exactly one creature.");
-        targetRank = null;
+        pf2ecac_counteractTargetRank = null;
       } else {
         const targetActor = targets[0].actor;
         if (!targetActor) {
           ui.notifications.warn("Target has no actor.");
-          targetRank = null;
+          pf2ecac_counteractTargetRank = null;
         } else {
-          targetRank = Math.ceil(targetActor.system.details.level.value / 2);
+          pf2ecac_counteractTargetRank = Math.ceil(targetActor.system.details.level.value / 2);
         }
       }
     } else {
-      targetRank = parseInt(args["target-rank"]);
+      pf2ecac_counteractTargetRank = parseInt(args["target-rank"]);
     }
   }
 
-  const dc = args.dc ? parseInt(args.dc) + (args.adjustment ? parseInt(args.adjustment) : 0) : null;
+  pf2ecac_counteractDc = args.dc ? parseInt(args.dc) + (args.adjustment ? parseInt(args.adjustment) : 0) : null;
   
   const inlineTraits = args.traits ? args.traits.split(",").map(t => t.trim()) : [];
-  const itemTraits = args.__itemTraits ? args.__itemTraits.split(",") : [];
+  const overrideTraits = args.overrideTraits === true;
+  const itemTraits = !overrideTraits && args.__itemTraits ? args.__itemTraits.split(",") : [];
   const traits = [...new Set([...inlineTraits, ...itemTraits])];
 
   const rollOptions = args["options"] ? args["options"].split(",").map(t => t.trim()) : [];
 
   const systemOptions = actor.getRollOptions(["all", "dex-skill-check", "str-skill-check"]);
-  const allRollOptions = [...new Set([...systemOptions, ...rollOptions])];
+  const itemTraitsOptions = traits.map(t => `item:trait:${t}`);
+  const allRollOptions = [...new Set([...systemOptions, ...rollOptions, ...itemTraitsOptions])];
+
+  pf2ecac_counteractOriginalSourceRank = pf2ecac_counteractSourceRank;
+  pf2ecac_counteractOriginalTargetRank = pf2ecac_counteractTargetRank;
+  pf2ecac_counteractOriginalDc = pf2ecac_counteractDc;
+
+  if (game.system?.id === "pf2e") {
+    pf2ecac_showOutcome = game.settings.get("pf2e", "metagame_showResults");
+    pf2ecac_showDC = game.settings.get("pf2e", "metagame_showDC");
+  }
+  else if (game.system?.id === "sf2e") {
+    pf2ecac_showOutcome = game.settings.get("sf2e", "metagame_showResults");  
+    pf2ecac_showDC = game.settings.get("sf2e", "metagame_showDC");
+  }
+
+  if (args.showDC) pf2ecac_showDC = true;
+  if (args.hideDC) pf2ecac_showDC = false;
+
+  if (args.showOutcome) pf2ecac_showOutcome = true;
+  if (args.hideOutcome) pf2ecac_showOutcome = false;
+
+  if (traits.includes("secret")) {
+    rollMode = pf2ecac_setBlindRoll();
+  }
+
+  if (rollMode === "blindroll" || rollMode === "blind") {
+    pf2ecac_showDC = false;
+  }
 
   requestAnimationFrame(async () => {
     await pf2ecac_rollCounteractCheck(
@@ -259,14 +409,121 @@ async function pf2ecac_onCounteractButtonClick(event) {
       skipDialog,
       label,
       statistic,
-      sourceRank,
-      targetRank,
-      dc,
+      pf2ecac_counteractSourceRank,
+      pf2ecac_counteractTargetRank,
+      pf2ecac_counteractDc,
       traits,
       allRollOptions,
       statKey
     );
   });
+}
+
+function pf2ecac_patchCounteractDialog(dialog, $html) {
+  const context = dialog?.context;
+  const options = Array.isArray(context?.options)
+    ? context.options.includes("counteract")
+    : context?.options?.has?.("counteract");
+  if (!options) return;
+
+  const isGM = game.user.isGM;
+
+  const html = $html[0];
+  const container = html.querySelector(".add-modifier-panel");
+  if (!container) return;
+
+  const targetHtml = pf2ecac_showDC || isGM
+    ? `      <span class="type" style="display: flex; align-items: center; gap: 0.4rem; white-space: nowrap;">
+        <span>Target Rank</span>
+        <input type="number" name="counteract-target-rank" min="0" value="${pf2ecac_counteractTargetRank ?? ""}" style="width: 4ch; padding: 0.15rem 0.3rem; line-height: 1.1;" />
+      </span>`
+    : "";
+
+  const dcHtml = pf2ecac_showDC || isGM
+    ? `      <span class="value" style="display: flex; align-items: center; gap: 0.4rem; white-space: nowrap;">
+        <span>DC</span>
+        <input type="number" name="counteract-dc" min="0" value="${pf2ecac_counteractDc ?? ""}" style="width: 4ch; padding: 0.15rem 0.3rem; line-height: 1.1;" />
+      </span>`
+    : "";
+
+  const section = document.createElement("div");
+  section.classList.add("counteract-dialog-fields");
+  section.innerHTML = `
+    <div class="add-entry-row counteract-input-row" style="display: flex; align-items: center; gap: 1rem;">
+      <span class="mod" style="display: flex; align-items: center; gap: 0.4rem; white-space: nowrap;">
+        <span>Source Rank</span>
+        <input type="number" name="counteract-source-rank" min="0" value="${pf2ecac_counteractSourceRank ?? ""}" style="width: 4ch; padding: 0.15rem 0.3rem; line-height: 1.1;" />
+      </span>
+${targetHtml}
+${dcHtml}
+      <span class="counteract-reset" style="display: flex; align-items: center; margin-left: auto;">
+        <button type="button" class="counteract-reset" style="padding: 4 0.75rem;">Reset</button>
+      </span>
+    </div>
+    <hr>
+  `;
+
+  const target = html.querySelector(".dialog-row.header");
+  if (target) {
+    target.parentNode?.insertBefore(section, target);
+  } else {
+    container.parentNode?.insertBefore(section, container);
+  }
+
+  const sourceInput = section.querySelector("input[name='counteract-source-rank']");
+  const targetInput = section.querySelector("input[name='counteract-target-rank']");
+  const dcInput = section.querySelector("input[name='counteract-dc']");
+  const resetButton = section.querySelector("button.counteract-reset");
+
+  const form = html.querySelector("form");
+  form?.addEventListener("submit", () => {
+    if (sourceInput) {
+      if (sourceInput.value === "") {
+        pf2ecac_counteractSourceRank = null;
+      } else {
+        const value = sourceInput.valueAsNumber;
+        pf2ecac_counteractSourceRank = Number.isNaN(value) ? null : value;
+      }
+    }
+
+    if (targetInput) {
+      if (targetInput.value === "") {
+        pf2ecac_counteractTargetRank = null;
+      } else {
+        const value = targetInput.valueAsNumber;
+        pf2ecac_counteractTargetRank = Number.isNaN(value) ? null : value;
+      }
+    }
+
+    if (dcInput) {
+      if (dcInput.value === "") {
+        pf2ecac_counteractDc = null;
+      } else {
+        const value = dcInput.valueAsNumber;
+        pf2ecac_counteractDc = Number.isNaN(value) ? null : value;
+      }
+    }
+
+    if (dialog.context) {
+      dialog.context.dc = typeof pf2ecac_counteractDc === "number"
+        ? { value: pf2ecac_counteractDc }
+        : undefined;
+    }
+  }, { capture: true });
+
+  resetButton?.addEventListener("click", () => {
+    if (sourceInput) {
+      sourceInput.value = pf2ecac_counteractOriginalSourceRank ?? "";
+    }
+    if (targetInput) {
+      targetInput.value = pf2ecac_counteractOriginalTargetRank ?? "";
+    }
+    if (dcInput) {
+      dcInput.value = pf2ecac_counteractOriginalDc ?? "";
+    }
+  });
+
+  dialog.setPosition();
 }
 
 async function pf2ecac_onPTCButtonClick(event) {
@@ -278,98 +535,86 @@ async function pf2ecac_onPTCButtonClick(event) {
 
   const clone = wrapper.cloneNode(true);
 
+  const actor = pf2ecac_getActor();
+
+  const roll_mode = pf2ecac_getRollMode(event);
+
   await ChatMessage.create({
     user: game.user.id,
+    speaker: ChatMessage.getSpeaker({ actor }),
     content: clone.outerHTML,
+    blind: roll_mode === "blindroll" || roll_mode === "blind",
+    whisper: roll_mode === "blindroll" || roll_mode === "blind" ? game.users.filter(u => u.isGM).map(u => u.id) : []
   });
 }
 
 function pf2ecac_generateCounteractMessage(degree, sourceRank, dcProvided, targetRank, showDC) {
-  const resulttexts = {
-    succ: "You successfully counteract the target!",
+  const texts = {
+    success: "You successfully counteract the target!",
     fail: "You fail to counteract the target.",
-    failrank: "Counteract failed due to target's higher rank."
+    failRank: "Counteract failed due to target's higher rank."
   };
+
+  const failText = showDC ? texts.failRank : texts.fail;
   
-  const thresholds = {
-    3: `${sourceRank + 3} or less`,
-    2: `${sourceRank + 1} or less`,
-    1: `less than ${sourceRank}`,
-    0: "You fail to counteract the target."
-  };
+  const hasSource = sourceRank !== null;
+  const hasTarget = targetRank !== null;
 
-  const failText = showDC ? resulttexts.failrank : resulttexts.fail;
-
-  if (dcProvided && typeof targetRank === "number") {
-    const result = (() => {
-      switch (degree) {
-        case 3:
-          return targetRank <= sourceRank + 3
-            ? resulttexts.succ
-            : failText;
-        case 2:
-          return targetRank <= sourceRank + 1
-            ? resulttexts.succ
-            : failText;
-        case 1:
-          return targetRank < sourceRank
-            ? resulttexts.succ
-            : failText;
-        default:
-          return resulttexts.fail;
-      }
-    })();
-
-    return `<strong>Counteract Result </strong>${result}`;
+  function successCheck(deg) {
+    if (hasSource && hasTarget) {
+      if (deg === 3) return targetRank <= sourceRank + 3;
+      if (deg === 2) return targetRank <= sourceRank + 1;
+      if (deg === 1) return targetRank < sourceRank;
+      return false;
+    }
+    return null;
   }
 
-  else if (dcProvided && typeof targetRank !== "number") {
-    const result = (() => {
-      switch (degree) {
-        case 3:
-          return `You counteract the target if its counteract rank is ${thresholds[3]}.`;
-        case 2:
-          return `You counteract the target if its counteract rank is ${thresholds[2]}.`;
-        case 1:
-          return `You counteract the target if its counteract rank is ${thresholds[1]}.`;
-        default:
-          return `${thresholds[0]}`;
-      }
-    })();
+  function conditionText(deg) {
+    if (hasSource && hasTarget) {
+      if (deg === 0) return texts.fail;
+      return successCheck(deg) ? texts.success : failText;
+    }
 
-    return `<strong>Counteract Result </strong>${result}`;
+    if (!hasSource && !hasTarget) {
+      if (deg === 3) return "You counteract the target if its counteract rank is no more than 3 higher than yours.";
+      if (deg === 2) return "You counteract the target if its counteract rank is no more than 1 higher than yours.";
+      if (deg === 1) return "You counteract the target if its counteract rank is lower than yours.";
+      return texts.fail;
+    }
+
+    if (!hasSource && hasTarget) {
+      if (deg === 3) return `You counteract the target if your counteract rank is ${targetRank - 3} or more.`;
+      if (deg === 2) return `You counteract the target if your counteract rank is ${targetRank - 1} or more.`;
+      if (deg === 1) return `You counteract the target if your counteract rank is ${targetRank + 1} or more.`;
+      return texts.fail;
+    }
+
+    if (hasSource && !hasTarget) {
+      if (deg === 3) return `You counteract the target if its counteract rank is ${sourceRank + 3} or less.`;
+      if (deg === 2) return `You counteract the target if its counteract rank is ${sourceRank + 1} or less.`;
+      if (deg === 1) return `You counteract the target if its counteract rank is ${sourceRank - 1} or less.`;
+      return texts.fail;
+    }
   }
 
-  else if (!dcProvided && typeof targetRank === "number") {
-    const cs = targetRank <= sourceRank + 3
-      ? resulttexts.succ
-      : failText;
-
-    const s = targetRank <= sourceRank + 1
-      ? resulttexts.succ
-      : failText;
-
-    const f = targetRank < sourceRank
-      ? resulttexts.succ
-      : failText;
-
-    return `
-      <strong>Critical Success</strong> ${cs}<br>
-      <hr><strong>Success</strong> ${s}<br>
-      <hr><strong>Failure</strong> ${f}<br>
-      <hr><strong>Critical Failure</strong> ${resulttexts.fail}
-      `;
+  function result(deg) {
+    if (deg === 0) return texts.fail;
+    const check = successCheck(deg);
+    if (check === null) return conditionText(deg);
+    return check ? texts.success : failText;
   }
 
-  else {
-
-    return `
-      <strong>Critical Success</strong> You counteract the target if its counteract rank is ${thresholds[3]}.<br>
-      <hr><strong>Success</strong> You counteract the target if its counteract rank is ${thresholds[2]}.<br>
-      <hr><strong>Failure</strong> You counteract the target if its counteract rank is ${thresholds[1]}.<br>
-      <hr><strong>Critical Failure</strong> ${thresholds[0]}
-      `;
+  if (dcProvided) {
+    return `<strong>Counteract Result </strong>${result(degree)}`;
   }
+
+  return `
+    <strong>Critical Success</strong> ${conditionText(3)}<br>
+    <hr><strong>Success</strong> ${conditionText(2)}<br>
+    <hr><strong>Failure</strong> ${conditionText(1)}<br>
+    <hr><strong>Critical Failure</strong> ${texts.fail}
+  `;
 }
 
 function pf2ecac_registerCounteractInLine() {
@@ -380,8 +625,13 @@ function pf2ecac_registerCounteractInLine() {
     const label = match[2] ?? "Counteract";
 
     const parsedArgs = args.split("|").reduce((acc, part) => {
-      const [key, ...rest] = part.split(":");
-      if (!key || rest.length === 0) return acc;
+      const trimmed = part.trim();
+      if (!trimmed) return acc;
+      const [key, ...rest] = trimmed.split(":");
+      if (rest.length === 0) {
+        acc[key.trim()] = true;
+        return acc;
+      }
       acc[key.trim()] = rest.join(":").trim();
       return acc;
     }, {});
@@ -390,7 +640,7 @@ function pf2ecac_registerCounteractInLine() {
       parsedArgs.__itemTraits = options.rollData.item.system.traits.value.join(",");
     }
 
-    const requiredKeys = ["mod", "source-rank"];
+    const requiredKeys = ["mod"];
     for (const key of requiredKeys) {
       if (!(key in parsedArgs)) {
         return document.createTextNode(`Invalid Counteract syntax: missing "${key}"`);
@@ -416,35 +666,68 @@ function pf2ecac_registerCounteractInLine() {
       }
     }
 
-    const link = document.createElement("a");
-    link.classList.add("inline-check", "counteract-roll", "with-repost");
-    link.dataset.args = JSON.stringify(parsedArgs);
-    link.dataset.label = label;
+    const counteractButton = document.createElement("a");
+
+    counteractButton.classList.add(
+      "inline-check",
+      "counteract-roll"
+    );
+
+    counteractButton.dataset.args = JSON.stringify(parsedArgs);
+    counteractButton.dataset.label = label;
 
     if (parsedArgs.traits?.split(",").map(t => t.trim().toLowerCase()).includes("secret")) {
-      link.dataset.pf2Traits = "secret";
+      counteractButton.dataset.pf2Traits = "secret";
     }
 
     const icon = document.createElement("i");
-    icon.className = "fa-solid fa-redo icon";
+    icon.classList.add("fa-solid", "fa-redo", "icon");
 
     const span = document.createElement("span");
     span.classList.add("label");
     span.textContent = label;
 
-    const repost = document.createElement("i");
-    repost.classList.add("fa-solid", "fa-comment-alt");
-    repost.dataset.pf2Repost = "";
-    repost.title = "Post prompt to chat";
+    counteractButton.append(icon, span);
 
-    link.append(icon, span, repost);
+    const foundryDoc =
+      options?.relativeTo ??
+      options?.rollData?.actor ??
+      options?.rollData?.item;
+
+    if (!foundryDoc || foundryDoc.isOwner) {
+      counteractButton.classList.add("with-repost");
+    }
+
+    const repostButtons = counteractButton.querySelectorAll("i[data-pf2-repost]");
+
+    if (repostButtons.length > 0) {
+      if (foundryDoc && !foundryDoc.isOwner) {
+        for (const button of repostButtons) {
+          button.remove();
+        }
+
+        counteractButton.classList.remove("with-repost");
+      }
+    }
+    else if (!foundryDoc || foundryDoc.isOwner) {
+      const repost = document.createElement("i");
+
+      repost.classList.add(
+        "fa-solid",
+        "fa-comment",
+        "repost"
+      );
+
+      repost.dataset.pf2Repost = "";
+      repost.title = game.i18n.localize("PF2E.Repost");
+
+      counteractButton.append(repost);
+    }
 
     const wrapper = document.createElement("span");
     wrapper.classList.add("pf2e-inline-button");
-    wrapper.style.display = "inline-flex";
-    wrapper.style.alignItems = "center";
-    wrapper.style.gap = "0.25em";
-    wrapper.append(link);
+
+    wrapper.append(counteractButton);
 
     return wrapper;
   };
@@ -457,7 +740,7 @@ function pf2ecac_registerCounteractInLine() {
   });
 }
 
-async function pf2ecac_getLevelBasedDC(levelOrToken){
+async function pf2ecac_getLevelBasedDC(levelOrTokenOrActor) {
   const dcByLevel = new Map([
     [-1, 13],
     [0, 14],
@@ -486,16 +769,38 @@ async function pf2ecac_getLevelBasedDC(levelOrToken){
     [23, 46],
     [24, 48],
     [25, 50],
-]);
+  ]);
 
-const level = (levelOrToken?.actor?.system?.details?.level?.value ?? levelOrToken) ?? 0;
+  const level =
+    levelOrTokenOrActor?.actor?.system?.details?.level?.value ??
+    levelOrTokenOrActor?.system?.details?.level?.value ??
+    levelOrTokenOrActor ??
+    0;
 
-return dcByLevel.get(level) ?? 14;
+  return dcByLevel.get(level) ?? 14;
 }
 
 function pf2ecac_getRollMode(e) {
-  if (e.ctrlKey) return "blindroll";
-  return game.settings.get("core", "rollMode");
+  if (e.ctrlKey){
+    return pf2ecac_setBlindRoll();
+  }
+  else {
+    if (!game.settings.get("core", "rollMode")) {
+      return game.settings.get("core", "messageMode");
+    }
+    else {
+      return game.settings.get("core", "rollMode");
+    }
+  }
+}
+
+function pf2ecac_setBlindRoll(){
+  if (!game.settings.get("core", "rollMode")) {
+      return "blind";     
+    }
+    else {
+      return "blindroll";
+    }
 }
 
 function pf2ecac_getRollDialog(e) {
@@ -512,7 +817,7 @@ function pf2ecac_getTargetToken() {
 }
 
 function pf2ecac_getActor() {
-  actor = pf2ecac_getSourceToken(); 
+  const actor = pf2ecac_getSourceToken(); 
   return actor || new Actor({ type: "npc", name: game.user.name });
 }
 
@@ -521,11 +826,43 @@ function pf2ecac_capitalizeFirst(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-Hooks.once("init", () => {
-  pf2ecac_registerCounteractInLine();
-});
+function pf2ecac_getSpellcastingEntry(actor, tradition = "highest") {
+  const entries = [...actor.spellcasting.collections.values()]
+    .map(c => c.entry)
+    .filter(e =>
+      e?.type === "spellcastingEntry" &&
+      e?.statistic?.dc?.value != null
+    );
+  const filtered = tradition === "highest"
+    ? entries
+    : entries.filter(e => e.tradition === tradition);
+  if (filtered.length === 0) return null;
+  const best = filtered.reduce((highest, current) => {
+    return current.statistic.dc.value > highest.statistic.dc.value
+      ? current
+      : highest;
+  });
 
-Hooks.once("ready", () => {
-  document.body.addEventListener("click", pf2ecac_onCounteractButtonClick);
-  document.body.addEventListener("click", pf2ecac_onPTCButtonClick);
-});
+  if (actor.type === "npc") {
+    const npcCounteractModifier = new game.pf2e.Modifier({
+      label: "Spell DC Modifier",
+      slug: "spell-counteract-modifier",
+      type: "untyped",
+      modifier: best.statistic.dc.value - 10
+    });
+
+    best.statistic.modifiers.push(npcCounteractModifier);
+
+    return {
+      tradition: best.tradition,
+      statistic: best.statistic,
+      dc: best.statistic.dc.value
+    };
+  }
+
+  return {
+    tradition: best.tradition,
+    statistic: best.statistic,
+    dc: best.statistic.dc.value
+  };
+}
