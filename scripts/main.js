@@ -293,7 +293,7 @@ async function pf2ecac_onCounteractButtonClick(event) {
           label: "Level Based Modifier",
           slug: "level-based-modifier",
           type: "untyped",
-          modifier: modValue
+          modifier: modValue - 10
       });        
       } else {
         modValue = Number(modParts[1]);
