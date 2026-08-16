@@ -1,5 +1,19 @@
+let pf2ecac_counteractSourceRank = null;
+let pf2ecac_counteractTargetRank = null;
+let pf2ecac_counteractDc = null;
+let pf2ecac_counteractOriginalSourceRank = null;
+let pf2ecac_counteractOriginalTargetRank = null;
+let pf2ecac_counteractOriginalDc = null;
+let pf2ecac_showDC = null;
+let pf2ecac_showSourceRank = null;
+let pf2ecac_showTargetRank = null;
+let pf2ecac_showOutcome = null;
+let pf2ecac_system = null;
+
 Hooks.once("init", () => {
+  pf2ecac_system = game.system.id;
   pf2ecac_registerCounteractInLine();
+  registerSettings();
 });
 
 Hooks.once("ready", () => {
@@ -9,19 +23,121 @@ Hooks.once("ready", () => {
 
 Hooks.on("renderCheckModifiersDialog", pf2ecac_patchCounteractDialog);
 
-let pf2ecac_counteractSourceRank = null;
-let pf2ecac_counteractTargetRank = null;
-let pf2ecac_counteractDc = null;
-let pf2ecac_counteractOriginalSourceRank = null;
-let pf2ecac_counteractOriginalTargetRank = null;
-let pf2ecac_counteractOriginalDc = null;
-let pf2ecac_showDC = null;
-let pf2ecac_showOutcome = null;
+Hooks.on("createChatMessage", async (message) => {
+  const counteractStats = message.flags?.[pf2ecac_system]?.context?.counteract;
+  if (!counteractStats) return;
+
+  if (!message.flags?.[pf2ecac_system]?.context?.isReroll) return;
+
+  const rollStats = message.rolls?.[0];
+  if (!rollStats) return;
+
+  const newOutcome = `
+    <div data-pf2-counteract-outcome>
+      ${pf2ecac_generateCounteractMessage(
+        rollStats.degreeOfSuccess,
+        counteractStats.sourceRank,
+        !!counteractStats.dc,
+        counteractStats.targetRank,
+        counteractStats.showDC,
+        counteractStats.showTargetRank,
+        counteractStats.showSourceRank
+      )}
+    </div>
+    `;
+
+  const existingFlavor = message.flavor ?? "";
+
+  const newFlavor = existingFlavor.replace(
+    /<div data-pf2-counteract-outcome>[\s\S]*?<\/div>/,
+    newOutcome
+  );
+
+  await message.update({
+    flavor: `${newFlavor}`
+  });
+});
+
+Hooks.on("renderChatMessageHTML", (message, html) => {
+    const context = message.flags?.pf2e?.context;
+    const showDC = context?.counteract?.showDC;
+    const showOutcome = context?.counteract?.showOutcome;
+
+    if (showDC === undefined && showOutcome === undefined) return;
+
+    const targetDCResult = html.querySelector(".target-dc-result");
+    if (!targetDCResult) return;
+
+    const targetDC = targetDCResult.querySelector(".target-dc");
+    const byResult = targetDCResult.querySelector(".result [data-whose='opposer']");
+    const outcomeRow = targetDCResult.querySelector(".result");
+
+    if (showDC !== undefined) {
+        if (showDC) {
+            targetDCResult.removeAttribute("data-visibility");
+            targetDC?.removeAttribute("data-visibility");
+
+            targetDC?.querySelectorAll("[data-visibility]").forEach((element) => {
+                element.removeAttribute("data-visibility");
+            });
+
+            byResult?.removeAttribute("data-visibility");
+        } else {
+            targetDC?.setAttribute("data-visibility", "gm");
+
+            targetDC?.querySelectorAll("[data-whose='opposer']").forEach((element) => {
+                element.setAttribute("data-visibility", "gm");
+            });
+
+            byResult?.setAttribute("data-visibility", "gm");
+        }
+    }
+
+    if (showOutcome !== undefined) {
+        if (showOutcome) {
+            targetDCResult.removeAttribute("data-visibility");
+            outcomeRow?.removeAttribute("data-visibility");
+
+            outcomeRow?.querySelectorAll("[data-visibility]").forEach((element) => {
+                if (element !== byResult || showDC !== false) {
+                    element.removeAttribute("data-visibility");
+                }
+            });
+        } else {
+            outcomeRow?.setAttribute("data-visibility", "gm");
+        }
+    }
+
+    if (showDC === false) {
+        byResult?.setAttribute("data-visibility", "gm");
+    }
+});
+
+function registerSettings() {
+  game.settings.register("pf2e-counteract", "showSourceRank", {
+    name: "Show Source Rank on Counteract Rolls",
+    hint: "Show/Hide the Source Rank for non-owned sources in the Roll Message.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register("pf2e-counteract", "showTargetRank", {
+    name: "Show Target Rank on Counteract Rolls",
+    hint: "Show/Hide the Target Rank Input on the Check Dialog and the Target Rank in the Roll Message.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+}
 
 async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, statistic, counteractRank, targetRank, dc, traits = [], rollOptions = [], statKey) {
   const identifier = foundry.utils.randomID();
   const system_domains = statKey === "number" || statKey === "levelBased" ? [] : statistic.domains;
-  const domains = ["check","counteract-check", ...system_domains];
+  const domains = ["check", "counteract-check", ...system_domains];
   const options = ["counteract","check:statistic:counteract","check:type:check", ...rollOptions, ...traits, identifier];
   const isPlayerOwned = actor.hasPlayerOwner;
 
@@ -34,6 +150,9 @@ async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, s
   }
   else if (statKey === "spell" || statKey === "spellCounteract") {
     statLabel = "Spell Modifier";
+  }
+  else if (statKey.includes("-lore")) {
+    statLabel = `${statistic.label} Lore`;
   }
   else {
     statLabel =  statistic.label;
@@ -52,7 +171,7 @@ async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, s
       actor,
       type: "counteract",
       domains,
-      dc: dc ? { value: dc } : undefined,
+      dc: dc ? { value: dc} : undefined,
       options,
       traits,
       createMessage: true,
@@ -63,7 +182,7 @@ async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, s
   );
 
   const message = game.messages.find(m =>
-    m.flags?.pf2e?.context?.options?.includes(identifier)
+    m.flags?.[pf2ecac_system]?.context?.options?.includes(identifier)
   );
   if (!message) return;
 
@@ -71,35 +190,49 @@ async function pf2ecac_rollCounteractCheck(actor, rollMode, skipDialog, label, s
   const updatedTargetRank = pf2ecac_counteractTargetRank ;
   const updatedDc = pf2ecac_counteractDc;
 
-  const counteractMessage = pf2ecac_generateCounteractMessage(result.degreeOfSuccess, updatedSourceRank, !!updatedDc, updatedTargetRank, pf2ecac_showDC);
+  let showSourceRank = pf2ecac_showSourceRank || isPlayerOwned;
+
+  const contextUpdate = {
+    sourceRank: updatedSourceRank,
+    targetRank: updatedTargetRank,
+    dc: updatedDc,
+    showDC: pf2ecac_showDC,
+    showOutcome: pf2ecac_showOutcome,
+    showTargetRank: pf2ecac_showTargetRank,
+    showSourceRank: showSourceRank
+  };
+
+  await message.setFlag(pf2ecac_system, "context.counteract", contextUpdate);
+
+  const counteractMessage = pf2ecac_generateCounteractMessage(result.degreeOfSuccess, updatedSourceRank, !!updatedDc, updatedTargetRank, pf2ecac_showDC, pf2ecac_showTargetRank, showSourceRank);
   const flavoredCounteract = pf2ecac_showOutcome ? counteractMessage : `<span data-visibility="gm">${counteractMessage}</span>`;
 
   const hasSource = updatedSourceRank != null;
   const hasTarget = updatedTargetRank != null;
 
   const updatedSourcePart = hasSource
-    ? (!pf2ecac_showDC && !isPlayerOwned
+    ? (!pf2ecac_showSourceRank && !isPlayerOwned
         ? `<span data-visibility="gm">Source Rank ${updatedSourceRank}</span>`
         : `Source Rank ${updatedSourceRank}`)
     : "";
 
   const updatedTargetPart = hasTarget
-    ? (pf2ecac_showDC
+    ? (pf2ecac_showTargetRank
         ? `Target Rank ${updatedTargetRank}`
         : `<span data-visibility="gm">Target Rank ${updatedTargetRank}</span>`)
     : "";
 
   const vsPart = (hasSource && hasTarget)
-    ? (pf2ecac_showDC
+    ? (pf2ecac_showTargetRank && showSourceRank
         ? " VS "
         : ` <span data-visibility="gm">VS</span> `)
     : "";
 
   const rankPart = (hasSource || hasTarget)
-    ? `<strong>${updatedSourcePart}${vsPart}${updatedTargetPart}</strong><br><hr>`
+    ? `<strong>${updatedSourcePart}${vsPart}${updatedTargetPart}</strong><hr>`
     : "";
 
-  const newFlavor = (message.flavor ?? "") + rankPart + flavoredCounteract;
+  const newFlavor = `${message.flavor}${rankPart}${flavoredCounteract}`;
 
   const updateData = { flavor: newFlavor };
   
@@ -398,11 +531,19 @@ async function pf2ecac_onCounteractButtonClick(event) {
   pf2ecac_counteractOriginalTargetRank = pf2ecac_counteractTargetRank;
   pf2ecac_counteractOriginalDc = pf2ecac_counteractDc;
 
-  pf2ecac_showOutcome = game.settings.get(game.system?.id, "metagame_showResults");  
-  pf2ecac_showDC = game.settings.get(game.system?.id, "metagame_showDC");
+  pf2ecac_showOutcome = game.settings.get(pf2ecac_system, "metagame_showResults");  
+  pf2ecac_showDC = game.settings.get(pf2ecac_system, "metagame_showDC");
+  pf2ecac_showSourceRank = game.settings.get("pf2e-counteract", "showSourceRank");
+  pf2ecac_showTargetRank = game.settings.get("pf2e-counteract", "showTargetRank");
 
   if (args.showDC) pf2ecac_showDC = true;
   if (args.hideDC) pf2ecac_showDC = false;
+
+  if (args.showSourceRank) pf2ecac_showSourceRank = true;
+  if (args.hideSourceRank) pf2ecac_showSourceRank = false;
+
+  if (args.showTargetRank) pf2ecac_showTargetRank = true;
+  if (args.hideTargetRank) pf2ecac_showTargetRank = false;
 
   if (args.showOutcome) pf2ecac_showOutcome = true;
   if (args.hideOutcome) pf2ecac_showOutcome = false;
@@ -445,7 +586,7 @@ function pf2ecac_patchCounteractDialog(dialog, $html) {
   const container = html.querySelector(".add-modifier-panel");
   if (!container) return;
 
-  const targetHtml = pf2ecac_showDC || isGM
+  const targetHtml = pf2ecac_showTargetRank || isGM
     ? `      <span class="type" style="display: flex; align-items: center; gap: 0.4rem; white-space: nowrap;">
         <span>Target Rank</span>
         <input type="number" name="counteract-target-rank" min="0" value="${pf2ecac_counteractTargetRank ?? ""}" style="width: 4ch; padding: 0.15rem 0.3rem; line-height: 1.1;" />
@@ -546,29 +687,34 @@ async function pf2ecac_onPTCButtonClick(event) {
   const wrapper = repostIcon.closest(".pf2e-inline-button");
   if (!wrapper) return;
 
-  const clone = wrapper.cloneNode(true);
-
   const actor = pf2ecac_getActor();
+  const target = pf2ecac_getTargetToken()?.actor ?? null;
+  const rollMode = pf2ecac_getRollMode(event);
 
-  const roll_mode = pf2ecac_getRollMode(event);
+  if (event.shiftKey) {
+    new PF2ECounteractApp(actor, target, rollMode).render(true);
+    return;
+  }
+
+  const clone = wrapper.cloneNode(true);
 
   await ChatMessage.create({
     user: game.user.id,
     speaker: ChatMessage.getSpeaker({ actor }),
     content: clone.outerHTML,
-    blind: roll_mode === "blindroll" || roll_mode === "blind",
-    whisper: roll_mode === "blindroll" || roll_mode === "blind" ? game.users.filter(u => u.isGM).map(u => u.id) : []
+    blind: rollMode === "blindroll" || rollMode === "blind",
+    whisper: rollMode === "blindroll" || rollMode === "blind" ? game.users.filter(u => u.isGM).map(u => u.id) : []
   });
 }
 
-function pf2ecac_generateCounteractMessage(degree, sourceRank, dcProvided, targetRank, showDC) {
+function pf2ecac_generateCounteractMessage(degree, sourceRank, dcProvided, targetRank, showDC, showTargetRank, showSourceRank) {
   const texts = {
     success: "You successfully counteract the target!",
     fail: "You fail to counteract the target.",
     failRank: "Counteract failed due to target's higher rank."
   };
 
-  const failText = showDC ? texts.failRank : texts.fail;
+  const failText = showTargetRank && showSourceRank ? texts.failRank : texts.fail;
   
   const hasSource = sourceRank !== null;
   const hasTarget = targetRank !== null;
@@ -619,14 +765,20 @@ function pf2ecac_generateCounteractMessage(degree, sourceRank, dcProvided, targe
   }
 
   if (dcProvided) {
-    return `<strong>Counteract Result </strong>${result(degree)}`;
+    return `
+    <div data-pf2-counteract-outcome>
+      <strong>Counteract Result </strong>${result(degree)}
+    </div>
+    `;
   }
 
   return `
-    <strong>Critical Success</strong> ${conditionText(3)}<br>
-    <hr><strong>Success</strong> ${conditionText(2)}<br>
-    <hr><strong>Failure</strong> ${conditionText(1)}<br>
-    <hr><strong>Critical Failure</strong> ${texts.fail}
+    <div data-pf2-counteract-outcome>
+      <strong>Critical Success</strong> ${conditionText(3)}<br>
+      <hr><strong>Success</strong> ${conditionText(2)}<br>
+      <hr><strong>Failure</strong> ${conditionText(1)}<br>
+      <hr><strong>Critical Failure</strong> ${texts.fail}
+    </div>
   `;
 }
 
@@ -878,4 +1030,32 @@ function pf2ecac_getSpellcastingEntry(actor, tradition = "highest") {
     statistic: best.statistic,
     dc: best.statistic.dc.value
   };
+}
+
+function pf2ecac_getAllSkills() {
+  return CONFIG.PF2E.skills;
+}
+
+function pf2ecac_getAllSaves() {
+  return CONFIG.PF2E.saves;
+}
+
+function pf2ecac_getAllClasses() {
+  return CONFIG.PF2E.classTraits;
+}
+
+function pf2ecac_getAllSpellTraditions() {
+  return CONFIG.PF2E.magicTraditions;
+}
+
+function pf2ecac_normalizeLoreInput(input) {
+  if (!input) return "";
+  let value = input
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+  value = value.replace(/\blore\b/g, "").trim();
+  value = value.replace(/\s+/g, " ");
+  value = value.replace(/\s/g, "-");
+  return value;
 }
